@@ -8,8 +8,7 @@
 
 #include <custom_shader_ps.h>
 #include <custom_shader_vs.h>
-#include <shader_ps.h>
-#include <shader_vs.h>
+#include <shader_cs.h>
 
 #include "BuiltinGlyphs.h"
 #include "dwrite.h"
@@ -65,112 +64,15 @@ static u64 queryPerfCount() noexcept
 
 BackendD3D::BackendD3D(const RenderingPayload& p)
 {
-    THROW_IF_FAILED(p.device->CreateVertexShader(&shader_vs[0], sizeof(shader_vs), nullptr, _vertexShader.addressof()));
-    THROW_IF_FAILED(p.device->CreatePixelShader(&shader_ps[0], sizeof(shader_ps), nullptr, _pixelShader.addressof()));
-
-    {
-        static constexpr D3D11_INPUT_ELEMENT_DESC layout[]{
-            { "SV_Position", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-            { "shadingType", 0, DXGI_FORMAT_R16_UINT, 1, offsetof(QuadInstance, shadingType), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-            { "renditionScale", 0, DXGI_FORMAT_R8G8_UINT, 1, offsetof(QuadInstance, renditionScale), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-            { "position", 0, DXGI_FORMAT_R16G16_SINT, 1, offsetof(QuadInstance, position), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-            { "size", 0, DXGI_FORMAT_R16G16_UINT, 1, offsetof(QuadInstance, size), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-            { "texcoord", 0, DXGI_FORMAT_R16G16_UINT, 1, offsetof(QuadInstance, texcoord), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-            { "color", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 1, offsetof(QuadInstance, color), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-        };
-        THROW_IF_FAILED(p.device->CreateInputLayout(&layout[0], std::size(layout), &shader_vs[0], sizeof(shader_vs), _inputLayout.addressof()));
-    }
-
-    {
-        static constexpr f32x2 vertices[]{
-            { 0, 0 },
-            { 1, 0 },
-            { 1, 1 },
-            { 0, 1 },
-        };
-        static constexpr D3D11_SUBRESOURCE_DATA initialData{ &vertices[0] };
-
-        D3D11_BUFFER_DESC desc{};
-        desc.ByteWidth = sizeof(vertices);
-        desc.Usage = D3D11_USAGE_IMMUTABLE;
-        desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        THROW_IF_FAILED(p.device->CreateBuffer(&desc, &initialData, _vertexBuffer.addressof()));
-    }
-
-    {
-        static constexpr u16 indices[]{
-            0, // { 0, 0 }
-            1, // { 1, 0 }
-            2, // { 1, 1 }
-            2, // { 1, 1 }
-            3, // { 0, 1 }
-            0, // { 0, 0 }
-        };
-        static constexpr D3D11_SUBRESOURCE_DATA initialData{ &indices[0] };
-
-        D3D11_BUFFER_DESC desc{};
-        desc.ByteWidth = sizeof(indices);
-        desc.Usage = D3D11_USAGE_IMMUTABLE;
-        desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
-        THROW_IF_FAILED(p.device->CreateBuffer(&desc, &initialData, _indexBuffer.addressof()));
-    }
+    THROW_IF_FAILED(p.device->CreateComputeShader(&shader_cs[0], sizeof(shader_cs), nullptr, _computeShader.addressof()));
 
     {
         static constexpr D3D11_BUFFER_DESC desc{
-            .ByteWidth = sizeof(VSConstBuffer),
+            .ByteWidth = sizeof(ConstBuffer),
             .Usage = D3D11_USAGE_DEFAULT,
             .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
         };
-        THROW_IF_FAILED(p.device->CreateBuffer(&desc, nullptr, _vsConstantBuffer.addressof()));
-    }
-
-    {
-        static constexpr D3D11_BUFFER_DESC desc{
-            .ByteWidth = sizeof(PSConstBuffer),
-            .Usage = D3D11_USAGE_DEFAULT,
-            .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
-        };
-        THROW_IF_FAILED(p.device->CreateBuffer(&desc, nullptr, _psConstantBuffer.addressof()));
-    }
-
-    {
-        // The final step of the ClearType blending algorithm is a lerp() between the premultiplied alpha
-        // background color and straight alpha foreground color given the 3 RGB weights in alphaCorrected:
-        //   lerp(background, foreground, weights)
-        // Which is equivalent to:
-        //   background * (1 - weights) + foreground * weights
-        //
-        // This COULD be implemented using dual source color blending like so:
-        //   .SrcBlend = D3D11_BLEND_SRC1_COLOR
-        //   .DestBlend = D3D11_BLEND_INV_SRC1_COLOR
-        //   .BlendOp = D3D11_BLEND_OP_ADD
-        // Because:
-        //   background * (1 - weights) + foreground * weights
-        //       ^             ^        ^     ^           ^
-        //      Dest     INV_SRC1_COLOR |    Src      SRC1_COLOR
-        //                            OP_ADD
-        //
-        // BUT we need simultaneous support for regular "source over" alpha blending
-        // (SHADING_TYPE_PASSTHROUGH)  like this:
-        //   background * (1 - alpha) + foreground
-        //
-        // This is why we set:
-        //   .SrcBlend = D3D11_BLEND_ONE
-        //
-        // --> We need to multiply the foreground with the weights ourselves.
-        static constexpr D3D11_BLEND_DESC desc{
-            .RenderTarget = { {
-                .BlendEnable = TRUE,
-                .SrcBlend = D3D11_BLEND_ONE,
-                .DestBlend = D3D11_BLEND_INV_SRC1_COLOR,
-                .BlendOp = D3D11_BLEND_OP_ADD,
-                .SrcBlendAlpha = D3D11_BLEND_ONE,
-                .DestBlendAlpha = D3D11_BLEND_INV_SRC1_ALPHA,
-                .BlendOpAlpha = D3D11_BLEND_OP_ADD,
-                .RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL,
-            } },
-        };
-        THROW_IF_FAILED(p.device->CreateBlendState(&desc, _blendState.addressof()));
+        THROW_IF_FAILED(p.device->CreateBuffer(&desc, nullptr, _constantBuffer.addressof()));
     }
 
 #if ATLAS_DEBUG_SHADER_HOT_RELOAD
@@ -215,9 +117,6 @@ void BackendD3D::Render(RenderingPayload& p)
 
     _debugUpdateShaders(p);
 
-    // After a Present() the render target becomes unbound.
-    p.deviceContext->OMSetRenderTargets(1, _customRenderTargetView ? _customRenderTargetView.addressof() : _renderTargetView.addressof(), nullptr);
-
     // Invalidating the render target helps with spotting invalid quad instances and Present1() bugs.
 #if ATLAS_DEBUG_SHOW_DIRTY || ATLAS_DEBUG_DUMP_RENDER_TARGET
     {
@@ -252,7 +151,7 @@ void BackendD3D::_handleSettingsUpdate(const RenderingPayload& p)
     {
         wil::com_ptr<ID3D11Texture2D> buffer;
         THROW_IF_FAILED(p.swapChain.swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(buffer.addressof())));
-        THROW_IF_FAILED(p.device->CreateRenderTargetView(buffer.get(), nullptr, _renderTargetView.put()));
+        THROW_IF_FAILED(p.device->CreateUnorderedAccessView(buffer.get(), nullptr, _renderTargetView.put()));
     }
 
     const auto fontChanged = _fontGeneration != p.s->font.generation();
@@ -575,12 +474,7 @@ void BackendD3D::_recreateBackgroundColorBitmap(const RenderingPayload& p)
 void BackendD3D::_recreateConstBuffer(const RenderingPayload& p) const
 {
     {
-        VSConstBuffer data{};
-        data.positionScale = { 2.0f / p.s->targetSize.x, -2.0f / p.s->targetSize.y };
-        p.deviceContext->UpdateSubresource(_vsConstantBuffer.get(), 0, nullptr, &data, 0, 0);
-    }
-    {
-        PSConstBuffer data{};
+        ConstBuffer data{};
         data.backgroundColor = colorFromU32Premultiply<f32x4>(p.s->misc->backgroundColor);
         data.backgroundCellSize = { static_cast<f32>(p.s->font->cellSize.x), static_cast<f32>(p.s->font->cellSize.y) };
         data.backgroundCellCount = { static_cast<f32>(p.s->viewportCellCount.x), static_cast<f32>(p.s->viewportCellCount.y) };
@@ -590,40 +484,12 @@ void BackendD3D::_recreateConstBuffer(const RenderingPayload& p) const
         data.doubleUnderlineWidth = p.s->font->doubleUnderline[0].height;
         data.curlyLineHalfHeight = _curlyLineHalfHeight;
         data.shadedGlyphDotSize = std::max(1.0f, std::roundf(std::max(p.s->font->cellSize.x / 16.0f, p.s->font->cellSize.y / 32.0f)));
-        p.deviceContext->UpdateSubresource(_psConstantBuffer.get(), 0, nullptr, &data, 0, 0);
+        p.deviceContext->UpdateSubresource(_constantBuffer.get(), 0, nullptr, &data, 0, 0);
     }
 }
 
 void BackendD3D::_setupDeviceContextState(const RenderingPayload& p)
 {
-    // IA: Input Assembler
-    ID3D11Buffer* vertexBuffers[]{ _vertexBuffer.get(), _instanceBuffer.get() };
-    static constexpr UINT strides[]{ sizeof(f32x2), sizeof(QuadInstance) };
-    static constexpr UINT offsets[]{ 0, 0 };
-    p.deviceContext->IASetIndexBuffer(_indexBuffer.get(), DXGI_FORMAT_R16_UINT, 0);
-    p.deviceContext->IASetInputLayout(_inputLayout.get());
-    p.deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    p.deviceContext->IASetVertexBuffers(0, 2, &vertexBuffers[0], &strides[0], &offsets[0]);
-
-    // VS: Vertex Shader
-    p.deviceContext->VSSetShader(_vertexShader.get(), nullptr, 0);
-    p.deviceContext->VSSetConstantBuffers(0, 1, _vsConstantBuffer.addressof());
-
-    // RS: Rasterizer Stage
-    D3D11_VIEWPORT viewport{};
-    viewport.Width = static_cast<f32>(p.s->targetSize.x);
-    viewport.Height = static_cast<f32>(p.s->targetSize.y);
-    p.deviceContext->RSSetViewports(1, &viewport);
-
-    // PS: Pixel Shader
-    ID3D11ShaderResourceView* resources[]{ _backgroundBitmapView.get(), _glyphAtlasView.get() };
-    p.deviceContext->PSSetShader(_pixelShader.get(), nullptr, 0);
-    p.deviceContext->PSSetConstantBuffers(0, 1, _psConstantBuffer.addressof());
-    p.deviceContext->PSSetShaderResources(0, 2, &resources[0]);
-
-    // OM: Output Merger
-    p.deviceContext->OMSetBlendState(_blendState.get(), nullptr, 0xffffffff);
-    p.deviceContext->OMSetRenderTargets(1, _customRenderTargetView ? _customRenderTargetView.addressof() : _renderTargetView.addressof(), nullptr);
 }
 
 void BackendD3D::_debugUpdateShaders(const RenderingPayload& p) noexcept
@@ -673,48 +539,10 @@ void BackendD3D::_debugUpdateShaders(const RenderingPayload& p) noexcept
             return blob;
         };
 
-        struct FileVS
-        {
-            std::wstring_view filename;
-            wil::com_ptr<ID3D11VertexShader> BackendD3D::*target;
-        };
-        struct FilePS
-        {
-            std::wstring_view filename;
-            wil::com_ptr<ID3D11PixelShader> BackendD3D::*target;
-        };
-
-        static constexpr std::array filesVS{
-            FileVS{ L"shader_vs.hlsl", &BackendD3D::_vertexShader },
-        };
-        static constexpr std::array filesPS{
-            FilePS{ L"shader_ps.hlsl", &BackendD3D::_pixelShader },
-        };
-
-        std::array<wil::com_ptr<ID3D11VertexShader>, filesVS.size()> compiledVS;
-        std::array<wil::com_ptr<ID3D11PixelShader>, filesPS.size()> compiledPS;
-
-        // Compile our files before moving them into `this` below to ensure we're
-        // always in a consistent state where all shaders are seemingly valid.
-        for (size_t i = 0; i < filesVS.size(); ++i)
-        {
-            const auto blob = compile(_sourceDirectory / filesVS[i].filename, "vs_4_0");
-            THROW_IF_FAILED(p.device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, compiledVS[i].addressof()));
-        }
-        for (size_t i = 0; i < filesPS.size(); ++i)
-        {
-            const auto blob = compile(_sourceDirectory / filesPS[i].filename, "ps_4_0");
-            THROW_IF_FAILED(p.device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, compiledPS[i].addressof()));
-        }
-
-        for (size_t i = 0; i < filesVS.size(); ++i)
-        {
-            this->*filesVS[i].target = std::move(compiledVS[i]);
-        }
-        for (size_t i = 0; i < filesPS.size(); ++i)
-        {
-            this->*filesPS[i].target = std::move(compiledPS[i]);
-        }
+        const auto blob = compile(_sourceDirectory / L"shader_cs.hlsl", "vs_4_0");
+        wil::com_ptr<ID3D11ComputeShader> computeShader;
+        THROW_IF_FAILED(p.device->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, computeShader.addressof()));
+        _computeShader = std::move(computeShader);
 
         _setupDeviceContextState(p);
     }
@@ -745,7 +573,7 @@ void BackendD3D::_resetGlyphAtlas(const RenderingPayload& p)
     // The index returned by _BitScanReverse is undefined when the input is 0. We can simultaneously guard
     // against that and avoid unreasonably small textures, by clamping the min. texture size to `minArea`.
     // `minArea` results in a 64kB RGBA texture which is the min. alignment for placed memory.
-    static constexpr u32 minArea = 128 * 128;
+    static constexpr u32 minArea = 1024 * 1024;
     static constexpr u32 maxArea = D3D10_REQ_TEXTURE2D_U_OR_V_DIMENSION * D3D10_REQ_TEXTURE2D_U_OR_V_DIMENSION;
 
     const auto cellArea = static_cast<u32>(p.s->font->cellSize.x) * p.s->font->cellSize.y;
@@ -934,118 +762,40 @@ bool BackendD3D::_checkMacTypeVersion(const RenderingPayload& p)
     return faulty;
 }
 
-BackendD3D::QuadInstance& BackendD3D::_getLastQuad() noexcept
+void BackendD3D::_appendQuad()
 {
-    assert(_instancesCount != 0);
-    return _instances[_instancesCount - 1];
-}
-
-// NOTE: Up to 5M calls per second -> no std::vector, no std::unordered_map.
-// This function is an easy >100x faster than std::vector, can be
-// inlined and reduces overall (!) renderer CPU usage by 5%.
-BackendD3D::QuadInstance& BackendD3D::_appendQuad()
-{
-    if (_instancesCount >= _instances.size())
-    {
-        _bumpInstancesSize();
-    }
-
-    return _instances[_instancesCount++];
-}
-
-void BackendD3D::_bumpInstancesSize()
-{
-    auto newSize = std::max(_instancesCount, _instances.size() * 2);
-    newSize = std::max(size_t{ 256 }, newSize);
-    Expects(newSize > _instances.size());
-
-    // Our render loop heavily relies on memcpy() which is up to between 1.5x (Intel)
-    // and 40x (AMD) faster for allocations with an alignment of 32 or greater.
-    auto newInstances = Buffer<QuadInstance, 32>{ newSize };
-    std::copy_n(_instances.data(), _instances.size(), newInstances.data());
-
-    _instances = std::move(newInstances);
 }
 
 void BackendD3D::_flushQuads(const RenderingPayload& p)
 {
-    if (!_instancesCount)
+    if (!_cellBuffer)
     {
-        return;
-    }
-
-    if (!_cursorRects.empty())
-    {
-        _drawCursorForeground();
-    }
-
-    // TODO: Shrink instances buffer
-    if (_instancesCount > _instanceBufferCapacity)
-    {
-        _recreateInstanceBuffers(p);
-    }
-
-    {
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        THROW_IF_FAILED(p.deviceContext->Map(_instanceBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-        memcpy(mapped.pData, _instances.data(), _instancesCount * sizeof(QuadInstance));
-        p.deviceContext->Unmap(_instanceBuffer.get(), 0);
-    }
-
-    // I found 4 approaches to drawing lots of quads quickly. There are probably even more.
-    // They can often be found in discussions about "particle" or "point sprite" rendering in game development.
-    // * Compute Shader: My understanding is that at the time of writing games are moving over to bucketing
-    //   particles into "tiles" on the screen and drawing them with a compute shader. While this improves
-    //   performance, it doesn't mix well with our goal of allowing arbitrary overlaps between glyphs.
-    //   Additionally none of the next 3 approaches use any significant amount of GPU time in the first place.
-    // * Geometry Shader: Geometry shaders can generate vertices on the fly, which would neatly replace our need
-    //   for an index buffer. However, many sources claim they're significantly slower than the following approaches.
-    // * DrawIndexed & DrawInstanced: Again, many sources claim that GPU instancing (Draw(Indexed)Instanced) performs
-    //   poorly for small meshes, and instead indexed vertices with a SRV (shader resource view) should be used.
-    //   The popular "Vertex Shader Tricks" talk from Bill Bilodeau at GDC 2014 suggests this approach, explains
-    //   how it works (you divide the `SV_VertexID` by 4 and index into the SRV that contains the per-instance data;
-    //   it's basically manual instancing inside the vertex shader) and shows how it outperforms regular instancing.
-    //   However on my own limited test hardware (built around ~2020), I found that for at least our use case,
-    //   GPU instancing matches the performance of using a custom buffer. In fact on my Nvidia GPU in particular,
-    //   instancing with ~10k instances appears to be about 50% faster and so DrawInstanced was chosen.
-    //   Instead I found that packing instance data as tightly as possible made the biggest performance difference,
-    //   and packing 16 bit integers with ID3D11InputLayout is quite a bit more convenient too.
-
-    p.deviceContext->DrawIndexedInstanced(6, static_cast<UINT>(_instancesCount), 0, 0, 0);
-    _instancesCount = 0;
-}
-
-void BackendD3D::_recreateInstanceBuffers(const RenderingPayload& p)
-{
-    // We use the viewport size of the terminal as the initial estimate for the amount of instances we'll see.
-    const auto minCapacity = static_cast<size_t>(p.s->viewportCellCount.x) * p.s->viewportCellCount.y;
-    auto newCapacity = std::max(_instancesCount, minCapacity);
-    auto newSize = newCapacity * sizeof(QuadInstance);
-    // Round up to multiples of 64kB to avoid reallocating too often.
-    // 64kB is the minimum alignment for committed resources in D3D12.
-    newSize = alignForward<size_t>(newSize, 64 * 1024);
-    newCapacity = newSize / sizeof(QuadInstance);
-
-    _instanceBuffer.reset();
-
-    {
-        const D3D11_BUFFER_DESC desc{
-            .ByteWidth = gsl::narrow<UINT>(newSize),
+        static constexpr D3D11_BUFFER_DESC desc{
+            .ByteWidth = sizeof(Cell) * 120 * 30,
             .Usage = D3D11_USAGE_DYNAMIC,
-            .BindFlags = D3D11_BIND_VERTEX_BUFFER,
+            .BindFlags = D3D11_BIND_SHADER_RESOURCE,
             .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
-            .StructureByteStride = sizeof(QuadInstance),
+            .MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,
+            .StructureByteStride = sizeof(Cell),
         };
-        THROW_IF_FAILED(p.device->CreateBuffer(&desc, nullptr, _instanceBuffer.addressof()));
+        THROW_IF_FAILED(p.device->CreateBuffer(&desc, nullptr, _cellBuffer.addressof()));
+        THROW_IF_FAILED(p.device->CreateShaderResourceView(_cellBuffer.get(), nullptr, _cellBufferView.addressof()));
     }
 
-    // IA: Input Assembler
-    ID3D11Buffer* vertexBuffers[]{ _vertexBuffer.get(), _instanceBuffer.get() };
-    static constexpr UINT strides[]{ sizeof(f32x2), sizeof(QuadInstance) };
-    static constexpr UINT offsets[]{ 0, 0 };
-    p.deviceContext->IASetVertexBuffers(0, 2, &vertexBuffers[0], &strides[0], &offsets[0]);
+    {
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        THROW_IF_FAILED(p.deviceContext->Map(_cellBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+        assert(mapped.RowPitch >= sizeof(_cells));
+        memcpy(mapped.pData, _cells, sizeof(_cells));
+        p.deviceContext->Unmap(_cellBuffer.get(), 0);
+    }
 
-    _instanceBufferCapacity = newCapacity;
+    p.deviceContext->CSSetConstantBuffers(0, 1, _constantBuffer.addressof());
+    ID3D11ShaderResourceView* resources[]{ _glyphAtlasView.get(), _cellBufferView.get() };
+    p.deviceContext->CSSetShaderResources(0, ARRAYSIZE(resources), &resources[0]);
+    p.deviceContext->CSSetUnorderedAccessViews(0, 1, _renderTargetView.addressof(), nullptr);
+    p.deviceContext->CSSetShader(_computeShader.get(), nullptr, 0);
+    p.deviceContext->Dispatch((p.s->targetSize.x + 7) / 8, (p.s->targetSize.x + 7) / 8, 1);
 }
 
 void BackendD3D::_drawBackground(const RenderingPayload& p)
@@ -1056,31 +806,20 @@ void BackendD3D::_drawBackground(const RenderingPayload& p)
         _uploadBackgroundBitmap(p);
     }
 
-    _appendQuad() = {
-        .shadingType = static_cast<u16>(ShadingType::Background),
-        .size = p.s->targetSize,
-    };
+    for (int y = 0; y < 30; y++)
+    {
+        for (int x = 0; x < 120; x++)
+        {
+            _cells[y][x].background = p.backgroundBitmap[y * 120 + x];
+            _cells[y][x].foreground = p.foregroundBitmap[y * 120 + x];
+            _cells[y][x].glyphX = (u32)-1;
+            _cells[y][x].glyphY = (u32)-1;
+        }
+    }
 }
 
 void BackendD3D::_uploadBackgroundBitmap(const RenderingPayload& p)
 {
-    D3D11_MAPPED_SUBRESOURCE mapped{};
-    THROW_IF_FAILED(p.deviceContext->Map(_backgroundBitmap.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-
-    auto src = std::bit_cast<const char*>(p.backgroundBitmap.data());
-    const auto srcEnd = std::bit_cast<const char*>(p.backgroundBitmap.data() + p.backgroundBitmap.size());
-    const auto srcWidth = p.s->viewportCellCount.x * sizeof(u32);
-    const auto srcStride = p.colorBitmapRowStride * sizeof(u32);
-    auto dst = static_cast<char*>(mapped.pData);
-
-    while (src < srcEnd)
-    {
-        memcpy(dst, src, srcWidth);
-        src += srcStride;
-        dst += mapped.RowPitch;
-    }
-
-    p.deviceContext->Unmap(_backgroundBitmap.get(), 0);
     _backgroundBitmapGeneration = p.colorBitmapGenerations[0];
 }
 
@@ -1164,14 +903,10 @@ void BackendD3D::_drawText(RenderingPayload& p)
                     row->dirtyTop = std::min(row->dirtyTop, t);
                     row->dirtyBottom = std::max(row->dirtyBottom, t + glyphEntry->size.y);
 
-                    _appendQuad() = {
-                        .shadingType = static_cast<u16>(glyphEntry->shadingType),
-                        .renditionScale = renditionScale,
-                        .position = { static_cast<i16>(l), static_cast<i16>(t) },
-                        .size = glyphEntry->size,
-                        .texcoord = glyphEntry->texcoord,
-                        .color = row->colors[x],
-                    };
+                    const auto cx = (l + p.s->font->cellSize.x / 2) / p.s->font->cellSize.x;
+                    const auto cy = (t + p.s->font->cellSize.y / 2) / p.s->font->cellSize.y;
+                    _cells[cy][cx].glyphX = glyphEntry->texcoord.x;
+                    _cells[cy][cx].glyphY = glyphEntry->texcoord.y;
 
                     if (glyphEntry->overlapSplit)
                     {
@@ -1220,82 +955,6 @@ void BackendD3D::_drawText(RenderingPayload& p)
 //   < ! - -
 void BackendD3D::_drawTextOverlapSplit(const RenderingPayload& p, u16 y)
 {
-    auto& originalQuad = _getLastQuad();
-
-    // If the current row has a non-default line rendition then every glyph is scaled up by 2x horizontally.
-    // This requires us to make some changes: For instance, if the ligature occupies columns 3, 4 and 5 (0-indexed)
-    // then we need to get the foreground colors from columns 2 and 4, because columns 0,1 2,3 4,5 6,7 and so on form pairs.
-    // A wide glyph would be a total of 4 actual columns wide! In other words, we need to properly round our clip rects and columns.
-    i32 columnAdvance = 1;
-    i32 columnAdvanceInPx = p.s->font->cellSize.x;
-    i32 cellCount = p.s->viewportCellCount.x;
-
-    if (p.rows[y]->lineRendition != LineRendition::SingleWidth)
-    {
-        columnAdvance = 2;
-        columnAdvanceInPx <<= 1;
-        cellCount >>= 1;
-    }
-
-    i32 originalLeft = originalQuad.position.x;
-    i32 originalRight = originalQuad.position.x + originalQuad.size.x;
-    originalLeft = std::max(originalLeft, 0);
-    originalRight = std::min(originalRight, cellCount * columnAdvanceInPx);
-
-    if (originalLeft >= originalRight)
-    {
-        return;
-    }
-
-    const auto colors = &p.foregroundBitmap[p.colorBitmapRowStride * y];
-
-    // As explained in the beginning, column and clipLeft should be in multiples of columnAdvance
-    // and columnAdvanceInPx respectively, because that's how line renditions work.
-    auto column = originalLeft / columnAdvanceInPx;
-    auto clipLeft = column * columnAdvanceInPx;
-    column *= columnAdvance;
-
-    // Our loop below will split the ligature by processing it from left to right.
-    // Some fonts however implement ligatures by replacing a string like "&&" with a whitespace padding glyph,
-    // followed by the actual "&&" glyph which has a 1 column advance width. In that case the originalQuad
-    // will have the .color of the 2nd column and not of the 1st one. We need to fix that here.
-    auto lastFg = colors[column];
-    originalQuad.color = lastFg;
-    column += columnAdvance;
-    clipLeft += columnAdvanceInPx;
-
-    // We must ensure to exit the loop while `column` is less than `cellCount.x`,
-    // otherwise we cause a potential out of bounds access into foregroundBitmap.
-    // This may happen with glyphs that are severely overlapping their cells,
-    // outside of the viewport. The `clipLeft < originalRight` condition doubles
-    // as a `column < cellCount.x` condition thanks to us std::min()ing it above.
-    for (; clipLeft < originalRight; column += columnAdvance, clipLeft += columnAdvanceInPx)
-    {
-        const auto fg = colors[column];
-
-        if (lastFg != fg)
-        {
-            // NOTE: _appendQuad might reallocate and any pointers
-            // acquired before calling this function are now invalid.
-            auto& next = _appendQuad();
-            // The item at -1 is the quad we've just appended, which means
-            // that the previous quad we want to split up is at -2.
-            auto& prev = _instances[_instancesCount - 2];
-
-            const auto prevWidth = clipLeft - prev.position.x;
-            const auto nextWidth = prev.size.x - prevWidth;
-
-            prev.size.x = gsl::narrow<u16>(prevWidth);
-
-            next = prev;
-            next.position.x = gsl::narrow<i16>(next.position.x + prevWidth);
-            next.texcoord.x = gsl::narrow<u16>(next.texcoord.x + prevWidth);
-            next.size.x = gsl::narrow<u16>(nextWidth);
-            next.color = fg;
-
-            lastFg = fg;
-        }
-    }
 }
 
 BackendD3D::AtlasGlyphEntry* BackendD3D::_drawGlyph(const RenderingPayload& p, const ShapedRow& row, AtlasFontFaceEntry& fontFaceEntry, u32 glyphIndex)
@@ -1684,8 +1343,15 @@ void BackendD3D::_drawGlyphAtlasAllocate(const RenderingPayload& p, stbrp_rect& 
     }
 
     _d2dEndDrawing();
+<<<<<<< Updated upstream
     _flushQuads(p);
     _resetGlyphAtlas(p);
+||||||| Stash base
+    _flushQuads(p);
+    _resetGlyphAtlas(p, rect.w, rect.h);
+=======
+    _resetGlyphAtlas(p, rect.w, rect.h);
+>>>>>>> Stashed changes
 
     if (!stbrp_pack_rects(&_rectPacker, &rect, 1))
     {
@@ -1739,6 +1405,7 @@ void BackendD3D::_splitDoubleHeightGlyph(const RenderingPayload& p, const Shaped
 
 void BackendD3D::_drawGridlines(const RenderingPayload& p, u16 y)
 {
+<<<<<<< Updated upstream
     const auto row = p.rows[y];
 
     const auto horizontalShift = static_cast<u8>(row->lineRendition != LineRendition::SingleWidth);
@@ -1851,371 +1518,190 @@ void BackendD3D::_drawGridlines(const RenderingPayload& p, u16 y)
     }
 }
 
-void BackendD3D::_drawCursorBackground(const RenderingPayload& p)
-{
-    _cursorRects.clear();
+||||||| Stash base
+    const auto row = p.rows[y];
 
-    if (p.cursorRect.empty())
+    const auto horizontalShift = static_cast<u8>(row->lineRendition != LineRendition::SingleWidth);
+    const auto verticalShift = static_cast<u8>(row->lineRendition >= LineRendition::DoubleHeightTop);
+
+    const auto cellSize = p.s->font->cellSize;
+    const auto rowTop = static_cast<i16>(cellSize.y * y);
+    const auto rowBottom = static_cast<i16>(rowTop + cellSize.y);
+
+    auto textCellTop = rowTop;
+    if (row->lineRendition == LineRendition::DoubleHeightBottom)
     {
-        return;
+        textCellTop -= cellSize.y;
     }
 
-    _cursorPosition = {
-        p.s->font->cellSize.x * p.cursorRect.left,
-        p.s->font->cellSize.y * p.cursorRect.top,
-        p.s->font->cellSize.x * p.cursorRect.right,
-        p.s->font->cellSize.y * p.cursorRect.bottom,
+    const i32 clipTop = row->lineRendition == LineRendition::DoubleHeightBottom ? rowTop : 0;
+    const i32 clipBottom = row->lineRendition == LineRendition::DoubleHeightTop ? rowBottom : p.s->targetSize.y;
+
+    const auto appendVerticalLines = [&](const GridLineRange& r, FontDecorationPosition pos) {
+        const auto textCellWidth = cellSize.x << horizontalShift;
+        const auto offset = pos.position << horizontalShift;
+        const auto width = static_cast<u16>(pos.height << horizontalShift);
+
+        auto posX = r.from * cellSize.x + offset;
+        const auto end = r.to * cellSize.x;
+
+        for (; posX < end; posX += textCellWidth)
+        {
+            _appendQuad() = {
+                .shadingType = static_cast<u16>(ShadingType::SolidLine),
+                .position = { static_cast<i16>(posX), rowTop },
+                .size = { width, p.s->font->cellSize.y },
+                .color = r.gridlineColor,
+            };
+        }
+    };
+    const auto appendHorizontalLine = [&](const GridLineRange& r, FontDecorationPosition pos, ShadingType shadingType, const u32 color) {
+        const auto offset = pos.position << verticalShift;
+        const auto height = static_cast<u16>(pos.height << verticalShift);
+
+        const auto left = static_cast<i16>(r.from * cellSize.x);
+        const auto width = static_cast<u16>((r.to - r.from) * cellSize.x);
+
+        i32 rt = textCellTop + offset;
+        i32 rb = rt + height;
+        rt = clamp(rt, clipTop, clipBottom);
+        rb = clamp(rb, clipTop, clipBottom);
+
+        if (rt < rb)
+        {
+            _appendQuad() = {
+                .shadingType = static_cast<u16>(shadingType),
+                .renditionScale = { static_cast<u8>(1 << horizontalShift), static_cast<u8>(1 << verticalShift) },
+                .position = { left, static_cast<i16>(rt) },
+                .size = { width, static_cast<u16>(rb - rt) },
+                .color = color,
+            };
+        }
     };
 
-    const auto cursorColor = p.s->cursor->cursorColor;
-    const auto offset = p.cursorRect.top * p.colorBitmapRowStride;
-
-    for (auto x1 = p.cursorRect.left; x1 < p.cursorRect.right; ++x1)
+    for (const auto& r : row->gridLineRanges)
     {
-        const auto x0 = x1;
-        const auto bg = p.backgroundBitmap[offset + x1] | 0xff000000;
+        // AtlasEngine.cpp shouldn't add any gridlines if they don't do anything.
+        assert(r.lines.any());
 
-        for (; x1 < p.cursorRect.right && (p.backgroundBitmap[offset + x1] | 0xff000000) == bg; ++x1)
+        if (r.lines.test(GridLines::Left))
         {
+            appendVerticalLines(r, p.s->font->gridLeft);
+        }
+        if (r.lines.test(GridLines::Right))
+        {
+            appendVerticalLines(r, p.s->font->gridRight);
+        }
+        if (r.lines.test(GridLines::Top))
+        {
+            appendHorizontalLine(r, p.s->font->gridTop, ShadingType::SolidLine, r.gridlineColor);
+        }
+        if (r.lines.test(GridLines::Bottom))
+        {
+            appendHorizontalLine(r, p.s->font->gridBottom, ShadingType::SolidLine, r.gridlineColor);
+        }
+        if (r.lines.test(GridLines::Strikethrough))
+        {
+            appendHorizontalLine(r, p.s->font->strikethrough, ShadingType::SolidLine, r.gridlineColor);
         }
 
-        const i16x2 position{
-            static_cast<i16>(p.s->font->cellSize.x * x0),
-            static_cast<i16>(p.s->font->cellSize.y * p.cursorRect.top),
-        };
-        const u16x2 size{
-            static_cast<u16>(p.s->font->cellSize.x * (x1 - x0)),
-            p.s->font->cellSize.y,
-        };
-        auto background = cursorColor;
-        auto foreground = bg;
-
-        if (cursorColor == 0xffffffff)
+        if (r.lines.test(GridLines::Underline))
         {
-            background = bg ^ 0xffffff;
-            foreground = 0xffffffff;
+            appendHorizontalLine(r, p.s->font->underline, ShadingType::SolidLine, r.underlineColor);
         }
-
-        // The legacy console used to invert colors by just doing `bg ^ 0xc0c0c0`. This resulted
-        // in a minimum squared distance of just 0.029195 across all possible color combinations.
-        background = ColorFix::GetPerceivableColor(background, bg, 0.25f * 0.25f);
-
-        auto& c0 = _cursorRects.emplace_back(position, size, background, foreground);
-
-        switch (static_cast<CursorType>(p.s->cursor->cursorType))
+        else if (r.lines.any(GridLines::DottedUnderline, GridLines::HyperlinkUnderline))
         {
-        case CursorType::Legacy:
-        {
-            const auto height = (c0.size.y * p.s->cursor->heightPercentage + 50) / 100;
-            c0.position.y += c0.size.y - height;
-            c0.size.y = height;
-            break;
+            appendHorizontalLine(r, p.s->font->underline, ShadingType::DottedLine, r.underlineColor);
         }
-        case CursorType::VerticalBar:
-            c0.size.x = p.s->font->thinLineWidth;
-            break;
-        case CursorType::Underscore:
-            c0.position.y += p.s->font->underline.position;
-            c0.size.y = p.s->font->underline.height;
-            break;
-        case CursorType::EmptyBox:
+        else if (r.lines.test(GridLines::DashedUnderline))
         {
-            auto& c1 = _cursorRects.emplace_back(c0);
-            if (x0 == p.cursorRect.left)
+            appendHorizontalLine(r, p.s->font->underline, ShadingType::DashedLine, r.underlineColor);
+        }
+        else if (r.lines.test(GridLines::CurlyUnderline))
+        {
+            appendHorizontalLine(r, _curlyUnderline, ShadingType::CurlyLine, r.underlineColor);
+        }
+        else if (r.lines.test(GridLines::DoubleUnderline))
+        {
+            for (const auto pos : p.s->font->doubleUnderline)
             {
-                auto& c = _cursorRects.emplace_back(c0);
-                // Make line a little shorter vertically so it doesn't overlap with the top/bottom horizontal lines.
-                c.position.y += p.s->font->thinLineWidth;
-                c.size.y -= 2 * p.s->font->thinLineWidth;
-                // The actual adjustment...
-                c.size.x = p.s->font->thinLineWidth;
+                appendHorizontalLine(r, pos, ShadingType::SolidLine, r.underlineColor);
             }
-            if (x1 == p.cursorRect.right)
-            {
-                auto& c = _cursorRects.emplace_back(c0);
-                // Make line a little shorter vertically so it doesn't overlap with the top/bottom horizontal lines.
-                c.position.y += p.s->font->thinLineWidth;
-                c.size.y -= 2 * p.s->font->thinLineWidth;
-                // The actual adjustment...
-                c.position.x += c.size.x - p.s->font->thinLineWidth;
-                c.size.x = p.s->font->thinLineWidth;
-            }
-            c0.size.y = p.s->font->thinLineWidth;
-            c1.position.y += c1.size.y - p.s->font->thinLineWidth;
-            c1.size.y = p.s->font->thinLineWidth;
-            break;
-        }
-        case CursorType::FullBox:
-            break;
-        case CursorType::DoubleUnderscore:
-        {
-            auto& c1 = _cursorRects.emplace_back(c0);
-            c0.position.y += p.s->font->doubleUnderline[0].position;
-            c0.size.y = p.s->font->thinLineWidth;
-            c1.position.y += p.s->font->doubleUnderline[1].position;
-            c1.size.y = p.s->font->thinLineWidth;
-            break;
-        }
-        default:
-            break;
         }
     }
+}
 
-    for (const auto& c : _cursorRects)
+void BackendD3D::_drawBitmap(const RenderingPayload& p, const ShapedRow* row, u16 y)
+{
+    const auto& b = row->bitmap;
+    auto ab = _glyphAtlasBitmaps.lookup(b.revision);
+    if (!ab)
     {
-        _appendQuad() = {
-            .shadingType = static_cast<u16>(ShadingType::Cursor),
-            .position = c.position,
-            .size = c.size,
-            .color = c.background,
+        stbrp_rect rect{
+            .w = p.s->font->cellSize.x * b.targetWidth,
+            .h = p.s->font->cellSize.y,
         };
+        _drawGlyphAtlasAllocate(p, rect);
+        _d2dBeginDrawing();
+
+        const D2D1_SIZE_U size{
+            static_cast<UINT32>(b.sourceSize.x),
+            static_cast<UINT32>(b.sourceSize.y),
+        };
+        const D2D1_BITMAP_PROPERTIES bitmapProperties{
+            .pixelFormat = { DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED },
+            .dpiX = static_cast<f32>(p.s->font->dpi),
+            .dpiY = static_cast<f32>(p.s->font->dpi),
+        };
+        wil::com_ptr<ID2D1Bitmap> bitmap;
+        THROW_IF_FAILED(_d2dRenderTarget->CreateBitmap(size, b.source.data(), static_cast<UINT32>(b.sourceSize.x) * 4, &bitmapProperties, bitmap.addressof()));
+
+        const D2D1_RECT_F rectF{
+            static_cast<f32>(rect.x),
+            static_cast<f32>(rect.y),
+            static_cast<f32>(rect.x + rect.w),
+            static_cast<f32>(rect.y + rect.h),
+        };
+        _d2dRenderTarget->DrawBitmap(bitmap.get(), &rectF, 1, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+
+        ab = _glyphAtlasBitmaps.insert(b.revision).first;
+        ab->size.x = static_cast<u16>(rect.w);
+        ab->size.y = static_cast<u16>(rect.h);
+        ab->texcoord.x = static_cast<u16>(rect.x);
+        ab->texcoord.y = static_cast<u16>(rect.y);
     }
+
+    const auto left = p.s->font->cellSize.x * (b.targetOffset - p.scrollOffsetX);
+    const auto top = p.s->font->cellSize.y * y;
+
+    _appendQuad() = {
+        .shadingType = static_cast<u16>(ShadingType::TextPassthrough),
+        .renditionScale = { 1, 1 },
+        .position = { static_cast<i16>(left), static_cast<i16>(top) },
+        .size = ab->size,
+        .texcoord = ab->texcoord,
+    };
+}
+
+=======
+}
+
+>>>>>>> Stashed changes
+void BackendD3D::_drawCursorBackground(const RenderingPayload& p)
+{
 }
 
 void BackendD3D::_drawCursorForeground()
 {
-    // NOTE: _appendQuad() may reallocate the _instances vector. It's important to iterate
-    // by index, because pointers (or iterators) would get invalidated. It's also important
-    // to cache the original _instancesCount since it'll get changed with each append.
-    auto instancesCount = _instancesCount;
-    size_t instancesOffset = 0;
-
-    assert(instancesCount != 0);
-
-    // All of the text drawing primitives are drawn as a single block, after drawing
-    // the background and cursor background and before drawing the selection overlay.
-    // To avoid having to check the shadingType in the loop below, we'll find the
-    // start and end of this "block" here in advance.
-    for (; instancesOffset < instancesCount; ++instancesOffset)
-    {
-        const auto shadingType = static_cast<ShadingType>(_instances[instancesOffset].shadingType);
-        if (shadingType >= ShadingType::TextDrawingFirst && shadingType <= ShadingType::TextDrawingLast)
-        {
-            break;
-        }
-    }
-    // We can also skip any instances (= any rows) at the beginning that are clearly not overlapping with
-    // the cursor. This reduces the CPU cost of this function by roughly half (a few microseconds).
-    for (; instancesOffset < instancesCount; ++instancesOffset)
-    {
-        const auto& it = _instances[instancesOffset];
-        if ((it.position.y + it.size.y) > _cursorPosition.top)
-        {
-            break;
-        }
-    }
-
-    // Now do the same thing as above, but backwards from the end.
-    for (; instancesCount > instancesOffset; --instancesCount)
-    {
-        const auto shadingType = static_cast<ShadingType>(_instances[instancesCount - 1].shadingType);
-        if (shadingType >= ShadingType::TextDrawingFirst && shadingType <= ShadingType::TextDrawingLast)
-        {
-            break;
-        }
-    }
-    for (; instancesCount > instancesOffset; --instancesCount)
-    {
-        const auto& it = _instances[instancesCount - 1];
-        if (it.position.y < _cursorPosition.bottom)
-        {
-            break;
-        }
-    }
-
-    // For cursors with multiple rectangles this really isn't all that fast, because it iterates
-    // over the instances vector multiple times. But I also don't really care, because the
-    // double-underline and empty-box cursors are pretty annoying to deal with in any case.
-    //
-    // It would definitely help if instead of position & size QuadInstances would use left/top/right/bottom
-    // with f32, because then computing the intersection would be much faster via SIMD. But that would
-    // make the struct size larger and cost more power to transmit more data to the GPU. ugh.
-    for (const auto& c : _cursorRects)
-    {
-        const int cursorL = c.position.x;
-        const int cursorT = c.position.y;
-        const int cursorR = cursorL + c.size.x;
-        const int cursorB = cursorT + c.size.y;
-
-        for (size_t i = instancesOffset; i < instancesCount; ++i)
-        {
-            const auto& it = _instances[i];
-            const int instanceL = it.position.x;
-            const int instanceT = it.position.y;
-            const int instanceR = instanceL + it.size.x;
-            const int instanceB = instanceT + it.size.y;
-
-            if (instanceL < cursorR && instanceR > cursorL && instanceT < cursorB && instanceB > cursorT)
-            {
-                // The _instances vector is _huge_ (easily up to 50k items) whereas only 1-2 items will actually overlap
-                // with the cursor. --> Make this loop more compact by putting as much as possible into a function call.
-                const auto added = _drawCursorForegroundSlowPath(c, i);
-                i += added;
-                instancesCount += added;
-            }
-        }
-    }
 }
 
 size_t BackendD3D::_drawCursorForegroundSlowPath(const CursorRect& c, size_t offset)
 {
-    // We won't die from copying 24 bytes. It simplifies the code below especially in
-    // respect to when/if we overwrite the _instances[offset] slot with a cutout.
-#pragma warning(suppress : 26820) // This is a potentially expensive copy operation. Consider using a reference unless a copy is required (p.9).
-    const auto it = _instances[offset];
-
-    // There's one special exception to the rule: Emojis. We currently don't really support inverting
-    // (or reversing) colored glyphs like that, so we can return early here and avoid cutting them up.
-    // It'd be too expensive to check for these rare glyph types inside the _drawCursorForeground() loop.
-    if (static_cast<ShadingType>(it.shadingType) == ShadingType::TextPassthrough)
-    {
-        return 0;
-    }
-
-    const int cursorL = c.position.x;
-    const int cursorT = c.position.y;
-    const int cursorR = cursorL + c.size.x;
-    const int cursorB = cursorT + c.size.y;
-
-    const int instanceL = it.position.x;
-    const int instanceT = it.position.y;
-    const int instanceR = instanceL + it.size.x;
-    const int instanceB = instanceT + it.size.y;
-
-    const auto intersectionL = std::max(cursorL, instanceL);
-    const auto intersectionT = std::max(cursorT, instanceT);
-    const auto intersectionR = std::min(cursorR, instanceR);
-    const auto intersectionB = std::min(cursorB, instanceB);
-
-    // We should only get called if there's actually an intersection.
-    assert(intersectionL < intersectionR && intersectionT < intersectionB);
-
-    // We need to ensure that the glyph doesn't "dirty" the cursor background with its un-inverted/un-reversed color.
-    // If it did, and we'd draw the inverted/reversed glyph on top, it would look smudged.
-    // As such, this cuts a cursor-sized hole into the original glyph and splits it up.
-    //
-    // > Always initialize an object
-    // I would pay money if this warning was a little smarter. The array can remain uninitialized,
-    // because it acts like a tiny small_vector, but without the assertions.
-#pragma warning(suppress : 26494) // Variable 'cutouts' is uninitialized. Always initialize an object (type.5).
-    rect<int> cutouts[4];
-    size_t cutoutCount = 0;
-
-    if (instanceT < intersectionT)
-    {
-        cutouts[cutoutCount++] = { instanceL, instanceT, instanceR, intersectionT };
-    }
-    if (instanceB > intersectionB)
-    {
-        cutouts[cutoutCount++] = { instanceL, intersectionB, instanceR, instanceB };
-    }
-    if (instanceL < intersectionL)
-    {
-        cutouts[cutoutCount++] = { instanceL, intersectionT, intersectionL, intersectionB };
-    }
-    if (instanceR > intersectionR)
-    {
-        cutouts[cutoutCount++] = { intersectionR, intersectionT, instanceR, intersectionB };
-    }
-
-    const auto addedInstances = cutoutCount ? cutoutCount - 1 : 0;
-
-    // Make place for cutoutCount-many items at position.
-    // NOTE: _bumpInstancesSize() reallocates the vector and all references to _instances will now be invalid.
-    if (addedInstances)
-    {
-        const auto instancesCount = _instancesCount;
-
-        _instancesCount += addedInstances;
-        if (_instancesCount >= _instances.size())
-        {
-            _bumpInstancesSize();
-        }
-
-        const auto src = _instances.data() + offset;
-        const auto dst = src + addedInstances;
-        const auto count = instancesCount - offset;
-        assert(src >= _instances.begin() && (src + count) < _instances.end());
-        assert(dst >= _instances.begin() && (dst + count) < _instances.end());
-        memmove(dst, src, count * sizeof(QuadInstance));
-    }
-
-    // Now that there's space we can write the glyph cutouts back into the instances vector.
-    for (size_t i = 0; i < cutoutCount; ++i)
-    {
-        const auto& cutout = cutouts[i];
-        auto& target = _instances[offset + i];
-
-        target.shadingType = it.shadingType;
-        target.renditionScale.x = it.renditionScale.x;
-        target.renditionScale.y = it.renditionScale.y;
-        target.position.x = static_cast<i16>(cutout.left);
-        target.position.y = static_cast<i16>(cutout.top);
-        target.size.x = static_cast<u16>(cutout.right - cutout.left);
-        target.size.y = static_cast<u16>(cutout.bottom - cutout.top);
-        target.texcoord.x = static_cast<u16>(it.texcoord.x + cutout.left - instanceL);
-        target.texcoord.y = static_cast<u16>(it.texcoord.y + cutout.top - instanceT);
-        target.color = it.color;
-    }
-
-    auto color = c.foreground == 0xffffffff ? it.color ^ 0xffffff : c.foreground;
-    color = ColorFix::GetPerceivableColor(color, c.background, 0.5f * 0.5f);
-
-    // If the cursor covers the entire glyph (like, let's say, a full-box cursor with an ASCII character),
-    // we don't append a new quad, but rather reuse the one that already exists (cutoutCount == 0).
-    auto& target = cutoutCount ? _appendQuad() : _instances[offset];
-
-    target.shadingType = it.shadingType;
-    target.renditionScale.x = it.renditionScale.x;
-    target.renditionScale.y = it.renditionScale.y;
-    target.position.x = static_cast<i16>(intersectionL);
-    target.position.y = static_cast<i16>(intersectionT);
-    target.size.x = static_cast<u16>(intersectionR - intersectionL);
-    target.size.y = static_cast<u16>(intersectionB - intersectionT);
-    target.texcoord.x = static_cast<u16>(it.texcoord.x + intersectionL - instanceL);
-    target.texcoord.y = static_cast<u16>(it.texcoord.y + intersectionT - instanceT);
-    target.color = color;
-
-    return addedInstances;
+    return 0;
 }
 
 void BackendD3D::_drawSelection(const RenderingPayload& p)
 {
-    u16 y = 0;
-    u16 lastFrom = 0;
-    u16 lastTo = 0;
-
-    for (const auto& row : p.rows)
-    {
-        if (row->selectionTo > row->selectionFrom)
-        {
-            // If the current selection line matches the previous one, we can just extend the previous quad downwards.
-            // The way this is implemented isn't very smart, but we also don't have very many rows to iterate through.
-            if (row->selectionFrom == lastFrom && row->selectionTo == lastTo)
-            {
-                _getLastQuad().size.y += p.s->font->cellSize.y;
-            }
-            else
-            {
-                _appendQuad() = {
-                    .shadingType = static_cast<u16>(ShadingType::Selection),
-                    .position = {
-                        static_cast<i16>(p.s->font->cellSize.x * row->selectionFrom),
-                        static_cast<i16>(p.s->font->cellSize.y * y),
-                    },
-                    .size = {
-                        static_cast<u16>(p.s->font->cellSize.x * (row->selectionTo - row->selectionFrom)),
-                        static_cast<u16>(p.s->font->cellSize.y),
-                    },
-                    .color = p.s->misc->selectionColor,
-                };
-                lastFrom = row->selectionFrom;
-                lastTo = row->selectionTo;
-            }
-        }
-
-        y++;
-    }
 }
 
 void BackendD3D::_debugShowDirty(const RenderingPayload& p)
@@ -2286,10 +1772,6 @@ void BackendD3D::_executeCustomShader(RenderingPayload& p)
     }
 
     {
-        // Before we do anything else we have to unbound _renderTargetView from being
-        // a render target, otherwise we can't use it as a shader resource below.
-        p.deviceContext->OMSetRenderTargets(1, _renderTargetView.addressof(), nullptr);
-
         // IA: Input Assembler
         p.deviceContext->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
         p.deviceContext->IASetInputLayout(nullptr);
@@ -2315,32 +1797,6 @@ void BackendD3D::_executeCustomShader(RenderingPayload& p)
     }
 
     p.deviceContext->Draw(4, 0);
-
-    {
-        // IA: Input Assembler
-        ID3D11Buffer* vertexBuffers[]{ _vertexBuffer.get(), _instanceBuffer.get() };
-        static constexpr UINT strides[]{ sizeof(f32x2), sizeof(QuadInstance) };
-        static constexpr UINT offsets[]{ 0, 0 };
-        p.deviceContext->IASetIndexBuffer(_indexBuffer.get(), DXGI_FORMAT_R16_UINT, 0);
-        p.deviceContext->IASetInputLayout(_inputLayout.get());
-        p.deviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        p.deviceContext->IASetVertexBuffers(0, 2, &vertexBuffers[0], &strides[0], &offsets[0]);
-
-        // VS: Vertex Shader
-        p.deviceContext->VSSetShader(_vertexShader.get(), nullptr, 0);
-        p.deviceContext->VSSetConstantBuffers(0, 1, _vsConstantBuffer.addressof());
-
-        // PS: Pixel Shader
-        ID3D11ShaderResourceView* resources[]{ _backgroundBitmapView.get(), _glyphAtlasView.get() };
-        p.deviceContext->PSSetShader(_pixelShader.get(), nullptr, 0);
-        p.deviceContext->PSSetConstantBuffers(0, 1, _psConstantBuffer.addressof());
-        p.deviceContext->PSSetShaderResources(0, 2, &resources[0]);
-        p.deviceContext->PSSetSamplers(0, 0, nullptr);
-
-        // OM: Output Merger
-        p.deviceContext->OMSetBlendState(_blendState.get(), nullptr, 0xffffffff);
-        p.deviceContext->OMSetRenderTargets(1, _customRenderTargetView.addressof(), nullptr);
-    }
 
     // With custom shaders, everything might be invalidated, so we have to
     // indirectly disable Present1() and its dirty rects this way.
