@@ -68,9 +68,7 @@ namespace winrt::Microsoft::Terminal::Control::implementation
 
     ControlCore::ControlCore(Control::IControlSettings settings,
                              Control::IControlAppearance unfocusedAppearance,
-                             TerminalConnection::ITerminalConnection connection) :
-        _desiredFont{ DEFAULT_FONT_FACE, 0, DEFAULT_FONT_WEIGHT, DEFAULT_FONT_SIZE, CP_UTF8 },
-        _actualFont{ DEFAULT_FONT_FACE, 0, DEFAULT_FONT_WEIGHT, { 0, DEFAULT_FONT_SIZE }, CP_UTF8, false }
+                             TerminalConnection::ITerminalConnection connection)
     {
         static const auto textMeasurementInit = [&]() {
             TextMeasurementMode mode = TextMeasurementMode::Graphemes;
@@ -1019,18 +1017,20 @@ namespace winrt::Microsoft::Terminal::Control::implementation
     // - Returns true if you need to call _refreshSizeUnderLock().
     bool ControlCore::_setFontSizeUnderLock(float fontSize)
     {
-        // Make sure we have a non-zero font size
+        const auto before = _actualFont.GetSize();
+
         const auto newSize = std::max(fontSize, 1.0f);
         const auto fontFace = _settings->FontFace();
         const auto fontWeight = _settings->FontWeight();
-        _desiredFont = { fontFace, 0, fontWeight.Weight, newSize, CP_UTF8 };
-        _actualFont = { fontFace, 0, fontWeight.Weight, _desiredFont.GetEngineSize(), CP_UTF8, false };
 
-        _desiredFont.SetEnableBuiltinGlyphs(_builtinGlyphs);
-        _desiredFont.SetEnableColorGlyphs(_colorGlyphs);
-        _desiredFont.SetCellSize(_cellWidth, _cellHeight);
+        _desiredFont = FontInfoDesired{
+            GetFaceName() = std::wstring{ std::wstring_view{ fontFace } },
+            .GetWeight() = fontWeight.Weight,
+            .fontSize = newSize,
+            .cellSize = { _cellWidth, _cellHeight },
+        };
+        _actualFontFaceName = fontFace;
 
-        const auto before = _actualFont.GetSize();
         _updateFont();
         const auto after = _actualFont.GetSize();
         return before != after;

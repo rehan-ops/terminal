@@ -21,7 +21,8 @@ SCREEN_INFORMATION::SCREEN_INFORMATION(
     _In_ IWindowMetrics* pMetrics,
     _In_ IAccessibilityNotifier* pNotifier,
     const TextAttribute popupAttributes,
-    const FontInfo fontInfo) :
+    const FontInfoDesired& fontInfoDesired,
+    const FontInfo& fontInfo) :
     OutputMode{ ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT },
     WheelDelta{ 0 },
     HWheelDelta{ 0 },
@@ -41,7 +42,7 @@ SCREEN_INFORMATION::SCREEN_INFORMATION(
     _PopupAttributes{ popupAttributes },
     _virtualBottom{ 0 },
     _currentFont{ fontInfo },
-    _desiredFont{ fontInfo }
+    _desiredFont{ fontInfoDesired }
 {
     // Check if VT mode should be enabled by default. This can be true if
     // VirtualTerminalLevel is set to !=0 in the registry, or when conhost
@@ -75,7 +76,8 @@ SCREEN_INFORMATION::~SCREEN_INFORMATION()
 // - dwScreenBufferSize - the initial size of the screen buffer (in rows/columns).
 // Return Value:
 [[nodiscard]] NTSTATUS SCREEN_INFORMATION::CreateInstance(_In_ til::size coordWindowSize,
-                                                          const FontInfo fontInfo,
+                                                          const FontInfoDesired& fontInfoDesired,
+                                                          const FontInfo& fontInfo,
                                                           _In_ til::size coordScreenBufferSize,
                                                           const TextAttribute defaultAttributes,
                                                           const TextAttribute popupAttributes,
@@ -93,7 +95,7 @@ SCREEN_INFORMATION::~SCREEN_INFORMATION()
         // It is possible for pNotifier to be null and that's OK.
         // For instance, the PTY doesn't need to send events. Just pass it along
         // and be sure that `SCREEN_INFORMATION` bypasses all event work if it's not there.
-        const auto pScreen = new SCREEN_INFORMATION(pMetrics, pNotifier, popupAttributes, fontInfo);
+        const auto pScreen = new SCREEN_INFORMATION(pMetrics, pNotifier, popupAttributes, fontInfoDesired, fontInfo);
 
         // Set up viewport
         pScreen->_viewport = Viewport::FromDimensions({ 0, 0 },
@@ -539,14 +541,9 @@ void SCREEN_INFORMATION::RefreshFontWithRenderer()
     }
 }
 
-void SCREEN_INFORMATION::UpdateFont(const FontInfo* const pfiNewFont)
+void SCREEN_INFORMATION::UpdateFont(const FontInfoDesired& pfiNewFont)
 {
-    auto& gci = ServiceLocator::LocateGlobals().getConsoleInformation();
-
-    FontInfoDesired fiDesiredFont(*pfiNewFont);
-    fiDesiredFont.SetEnableBuiltinGlyphs(gci.GetEnableBuiltinGlyphs());
-
-    GetDesiredFont() = fiDesiredFont;
+    GetDesiredFont() = pfiNewFont;
 
     RefreshFontWithRenderer();
 
@@ -1767,10 +1764,9 @@ const SCREEN_INFORMATION* SCREEN_INFORMATION::GetAltBuffer() const noexcept
     // Create new screen buffer.
     auto WindowSize = _viewport.Dimensions();
 
-    const auto& existingFont = GetCurrentFont();
-
     auto Status = SCREEN_INFORMATION::CreateInstance(WindowSize,
-                                                     existingFont,
+                                                     GetDesiredFont(),
+                                                     GetCurrentFont(),
                                                      WindowSize,
                                                      initAttributes,
                                                      GetPopupAttributes(),
@@ -2435,6 +2431,18 @@ FontInfo& SCREEN_INFORMATION::GetCurrentFont() noexcept
 const FontInfo& SCREEN_INFORMATION::GetCurrentFont() const noexcept
 {
     return _currentFont;
+}
+
+til::size SCREEN_INFORMATION::GetWhackyConhostFontSize() const noexcept
+{
+    auto size = _desiredFont.GetEngineSize().AsInteger_DoNotUse();
+
+    if (!_desiredFont.IsDefaultRasterFont() && size.width == 0)
+    {
+        size.width = lroundf(_currentFont.GetUnscaledSize().width);
+    }
+
+    return size;
 }
 
 // Method Description:

@@ -929,11 +929,8 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
             IncrementNumberRounder rounder;
             rounder.Increment(1e-6);
 
-            for (const auto& box : { _fontSizeBox(), _lineHeightBox() })
-            {
-                // BODGY: Depends on WinUI internals.
-                box.NumberFormatter().as<DecimalFormatter>().NumberRounder(rounder);
-            }
+            // BODGY: Depends on WinUI internals.
+            _fontSizeBox().NumberFormatter().as<DecimalFormatter>().NumberRounder(rounder);
         }
 
         INITIALIZE_BINDABLE_ENUM_SETTING(CursorShape, CursorStyle, winrt::Microsoft::Terminal::Core::CursorStyle, L"Profile_CursorShape", L"Content");
