@@ -939,6 +939,8 @@ namespace winrt::TerminalApp::implementation
                 auto profile = tab_impl->GetFocusedProfile();
                 _UpdateBackground(profile);
             }
+
+            _adjustProcessPriorityGivenFocusState(_activated);
         }
         CATCH_LOG();
     }

@@ -571,6 +571,11 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
         }
     }
 
+    uint64_t ConptyConnection::RootProcessHandle()
+    {
+        return reinterpret_cast<uint64_t>(_piClient.hProcess);
+    }
+
     void ConptyConnection::Close() noexcept
     try
     {

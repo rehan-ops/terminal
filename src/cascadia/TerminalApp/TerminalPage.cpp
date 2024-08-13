@@ -2337,6 +2337,8 @@ namespace winrt::TerminalApp::implementation
             auto profile = tab->GetFocusedProfile();
             _UpdateBackground(profile);
         }
+
+        _adjustProcessPriorityGivenFocusState(_activated);
     }
 
     uint32_t TerminalPage::NumberOfTabs() const
@@ -4539,11 +4541,16 @@ namespace winrt::TerminalApp::implementation
     // - sender: the ICoreState instance containing the connection state
     // Return Value:
     // - <none>
-    winrt::fire_and_forget TerminalPage::_ConnectionStateChangedHandler(const IInspectable& sender, const IInspectable& /*args*/) const
+    winrt::fire_and_forget TerminalPage::_ConnectionStateChangedHandler(const IInspectable& sender, const IInspectable& /*args*/)
     {
         if (const auto coreState{ sender.try_as<winrt::Microsoft::Terminal::Control::ICoreState>() })
         {
             const auto newConnectionState = coreState.ConnectionState();
+            if (sender == _GetActiveControl())
+            {
+                _adjustProcessPriorityGivenFocusState(_activated);
+            }
+
             if (newConnectionState == ConnectionState::Failed && !_IsMessageDismissed(InfoBarMessage::CloseOnExitInfo))
             {
                 co_await wil::resume_foreground(Dispatcher());
@@ -4811,12 +4818,82 @@ namespace winrt::TerminalApp::implementation
         }
     }
 
+    void TerminalPage::_adjustProcessPriorityGivenFocusState(const bool focused)
+    {
+        static auto pfn = []() -> BOOL(WINAPI*)(HWND, DWORD, PHANDLE) {
+            if (wil::unique_hmodule user32{ LoadLibraryExW(L"user32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32) })
+            {
+                auto p = GetProcAddress(user32.get(), reinterpret_cast<LPCSTR>(2805));
+                return reinterpret_cast<BOOL(WINAPI*)(HWND, DWORD, PHANDLE)>(p);
+            }
+            return nullptr;
+        }();
+
+        if (!pfn)
+        {
+            return;
+        }
+
+        std::array<HANDLE, 32> processes;
+        auto it = processes.begin();
+        const auto end = processes.end();
+
+        auto&& appendFromControl = [&](auto&& control) {
+            if (it == end)
+            {
+                return;
+            }
+            if (control)
+            {
+                if (auto conn = control.Connection())
+                {
+                    if (auto pty = conn.try_as<winrt::Microsoft::Terminal::TerminalConnection::ConptyConnection>())
+                    {
+                        if (uint64_t process = pty.RootProcessHandle())
+                        {
+                            *it++ = reinterpret_cast<HANDLE>(process);
+                        }
+                    }
+                }
+            }
+        };
+
+        if (!focused)
+        {
+            for (auto&& tab : _tabs)
+            {
+                if (auto t{ _GetTerminalTabImpl(tab) })
+                {
+                    if (const auto pane = t->GetRootPane())
+                    {
+                        pane->WalkTree([&](auto p) {
+                            if (const auto& control{ p->GetTerminalControl() })
+                            {
+                                appendFromControl(control);
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        else
+        {
+            appendFromControl(_GetActiveControl());
+        }
+
+        auto ret = pfn(_hostingHwnd.value(), gsl::narrow_cast<DWORD>(it - processes.begin()), processes.data());
+        LOG_IF_WIN32_BOOL_FALSE(ret);
+        OutputDebugStringW(fmt::format(FMT_COMPILE(L"Submitting {} processes to API -> {}\n"), it - processes.begin(), ret).c_str());
+    }
+
     void TerminalPage::WindowActivated(const bool activated)
     {
         // Stash if we're activated. Use that when we reload
         // the settings, change active panes, etc.
         _activated = activated;
         _updateThemeColors();
+
+        _adjustProcessPriorityGivenFocusState(activated);
 
         if (const auto& tab{ _GetFocusedTabImpl() })
         {
