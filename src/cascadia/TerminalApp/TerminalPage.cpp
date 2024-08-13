@@ -4546,14 +4546,12 @@ namespace winrt::TerminalApp::implementation
         if (const auto coreState{ sender.try_as<winrt::Microsoft::Terminal::Control::ICoreState>() })
         {
             const auto newConnectionState = coreState.ConnectionState();
-            if (sender == _GetActiveControl())
-            {
-                _adjustProcessPriorityGivenFocusState(_activated);
-            }
+            co_await wil::resume_foreground(Dispatcher());
+
+            _adjustProcessPriorityGivenFocusState(_activated);
 
             if (newConnectionState == ConnectionState::Failed && !_IsMessageDismissed(InfoBarMessage::CloseOnExitInfo))
             {
-                co_await wil::resume_foreground(Dispatcher());
                 if (const auto infoBar = FindName(L"CloseOnExitInfoBar").try_as<MUX::Controls::InfoBar>())
                 {
                     infoBar.IsOpen(true);
@@ -4881,9 +4879,10 @@ namespace winrt::TerminalApp::implementation
             appendFromControl(_GetActiveControl());
         }
 
-        auto ret = pfn(_hostingHwnd.value(), gsl::narrow_cast<DWORD>(it - processes.begin()), processes.data());
+        const auto count{ gsl::narrow_cast<DWORD>(it - processes.begin()) };
+        auto ret = pfn(_hostingHwnd.value(), count, count ? processes.data() : nullptr);
         LOG_IF_WIN32_BOOL_FALSE(ret);
-        OutputDebugStringW(fmt::format(FMT_COMPILE(L"Submitting {} processes to API -> {}\n"), it - processes.begin(), ret).c_str());
+        OutputDebugStringW(fmt::format(FMT_COMPILE(L"Submitting {} processes to API -> {}\n"), count, ret).c_str());
     }
 
     void TerminalPage::WindowActivated(const bool activated)

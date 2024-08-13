@@ -465,6 +465,8 @@ namespace winrt::Microsoft::Terminal::TerminalConnection::implementation
         DWORD exitCode{ 0 };
         GetExitCodeProcess(_piClient.hProcess, &exitCode);
 
+        _piClient.reset();
+
         // Signal the closing or failure of the process.
         // exitCode might be STILL_ACTIVE if a client has called FreeConsole() and
         // thus caused the tab to close, even though the CLI app is still running.
