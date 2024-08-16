@@ -425,18 +425,6 @@ void AtlasEngine::SetRetroTerminalEffect(bool enable) noexcept
     }
 }
 
-void AtlasEngine::SetSelectionBackground(const COLORREF color) noexcept
-{
-    const u32 selectionColor = (color & 0xffffff) | 0xff000000;
-    if (_api.s->misc->selectionColor != selectionColor)
-    {
-        auto misc = _api.s.write()->misc.write();
-        misc->selectionColor = selectionColor;
-        // Selection Foreground is based on the default foreground; it is also updated in UpdateDrawingBrushes
-        misc->selectionForeground = 0xff000000 | ColorFix::GetPerceivableColor(misc->foregroundColor, color, 0.5f * 0.5f);
-    }
-}
-
 void AtlasEngine::SetSoftwareRendering(bool enable) noexcept
 {
     if (_api.s->target->useWARP != enable)

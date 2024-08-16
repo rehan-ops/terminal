@@ -315,6 +315,15 @@ CATCH_RETURN()
         }
 
         _api.selectionSpans = til::point_span_subspan_within_rect(info.selectionSpans, dr);
+
+        u32 newSelectionColor{ static_cast<COLORREF>(info.selectionBackground) | 0xff000000 };
+        if (_api.s->misc->selectionColor != newSelectionColor)
+        {
+            auto misc = _api.s.write()->misc.write();
+            misc->selectionColor = newSelectionColor;
+            // Selection Foreground is based on the default foreground; it is also updated in UpdateDrawingBrushes
+            misc->selectionForeground = 0xff000000 | ColorFix::GetPerceivableColor(misc->foregroundColor, newSelectionColor, 0.5f * 0.5f);
+        }
     }
 
     return S_OK;
