@@ -26,6 +26,16 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         Editor::ProfileViewModel _Profile{ nullptr };
     };
 
+    //struct BellSoundEntryViewModel : BellSoundEntryViewModelT<BellSoundEntryViewModel>, ViewModelHelper<BellSoundEntryViewModel>
+    //{
+    //public:
+    //    BellSoundEntryViewModel() = default;
+    //    BellSoundEntryViewModel(hstring path) :
+    //        _Path{ path } {}
+    //
+    //    VIEW_MODEL_OBSERVABLE_PROPERTY(hstring, Path);
+    //};
+
     struct ProfileViewModel : ProfileViewModelT<ProfileViewModel>, ViewModelHelper<ProfileViewModel>
     {
     public:
@@ -45,6 +55,12 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         void SetBellStyleAudible(winrt::Windows::Foundation::IReference<bool> on);
         void SetBellStyleWindow(winrt::Windows::Foundation::IReference<bool> on);
         void SetBellStyleTaskbar(winrt::Windows::Foundation::IReference<bool> on);
+
+        hstring BellSoundPreview();
+        //Editor::BellSoundEntryViewModel RequestAddBellSound();
+        //void RequestDeleteBellSound(Editor::BellSoundEntryViewModel bellSound);
+        void RequestAddBellSound();
+        void RequestDeleteBellSound(uint32_t index);
 
         void SetAcrylicOpacityPercentageValue(double value)
         {
@@ -88,6 +104,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         til::typed_event<Editor::ProfileViewModel, Editor::DeleteProfileEventArgs> DeleteProfileRequested;
 
         VIEW_MODEL_OBSERVABLE_PROPERTY(ProfileSubPage, CurrentPage);
+        VIEW_MODEL_OBSERVABLE_PROPERTY(Windows::Foundation::Collections::IObservableVector<hstring>, CurrentBellSounds);
 
         PERMANENT_OBSERVABLE_PROJECTED_SETTING(_profile, Guid);
         PERMANENT_OBSERVABLE_PROJECTED_SETTING(_profile, ConnectionType);
@@ -114,6 +131,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         OBSERVABLE_PROJECTED_SETTING(_profile, SnapOnInput);
         OBSERVABLE_PROJECTED_SETTING(_profile, AltGrAliasing);
         OBSERVABLE_PROJECTED_SETTING(_profile, BellStyle);
+        OBSERVABLE_PROJECTED_SETTING(_profile, BellSound);
         OBSERVABLE_PROJECTED_SETTING(_profile, Elevate);
         OBSERVABLE_PROJECTED_SETTING(_profile, ReloadEnvironmentVariables);
         OBSERVABLE_PROJECTED_SETTING(_profile, RightClickContextMenu);
@@ -135,6 +153,7 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         winrt::hstring _lastIcon;
         Editor::AppearanceViewModel _defaultAppearanceViewModel;
 
+        void _UpdateCurrentBellSounds();
         static Windows::Foundation::Collections::IObservableVector<Editor::Font> _MonospaceFontList;
         static Windows::Foundation::Collections::IObservableVector<Editor::Font> _FontList;
 

@@ -40,6 +40,9 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         INITIALIZE_BINDABLE_ENUM_SETTING_REVERSE_ORDER(CloseOnExitMode, CloseOnExitMode, winrt::Microsoft::Terminal::Settings::Model::CloseOnExitMode, L"Profile_CloseOnExit", L"Content");
         INITIALIZE_BINDABLE_ENUM_SETTING(ScrollState, ScrollbarState, winrt::Microsoft::Terminal::Control::ScrollbarState, L"Profile_ScrollbarVisibility", L"Content");
 
+        // initialize CurrentBellSounds
+        _UpdateCurrentBellSounds();
+
         // Add a property changed handler to our own property changed event.
         // This propagates changes from the settings model to anybody listening to our
         //  unique view model members.
@@ -76,6 +79,14 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
             {
                 _NotifyChanges(L"HideIcon");
             }
+            else if (viewModelProperty == L"CurrentBellSounds")
+            {
+                _profile.BellSound(_CurrentBellSounds);
+            }
+            else if (viewModelProperty == L"BellSound")
+            {
+                _UpdateCurrentBellSounds();
+            }
         });
 
         // Do the same for the starting directory
@@ -96,6 +107,19 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         }
 
         _defaultAppearanceViewModel.IsDefault(true);
+    }
+
+    void ProfileViewModel::_UpdateCurrentBellSounds()
+    {
+        _CurrentBellSounds = winrt::single_threaded_observable_vector<hstring>();
+        if (_profile.HasBellSound())
+        {
+            for (auto&& bellSound : _profile.BellSound())
+            {
+                _CurrentBellSounds.Append(bellSound);
+            }
+        }
+        _NotifyChanges(L"CurrentBellSounds");
     }
 
     Model::TerminalSettings ProfileViewModel::TermSettings() const
@@ -373,6 +397,81 @@ namespace winrt::Microsoft::Terminal::Settings::Editor::implementation
         WI_UpdateFlag(currentStyle, Model::BellStyle::Taskbar, winrt::unbox_value<bool>(on));
         BellStyle(currentStyle);
     }
+
+    hstring ProfileViewModel::BellSoundPreview()
+    {
+        const auto& currentSound = BellSound();
+        if (!currentSound)
+        {
+            return RS_(L"Profile_BellSoundPreviewDefault");
+        }
+        else if (currentSound.Size() == 1)
+        {
+            std::filesystem::path filePath{ std::wstring_view{ currentSound.GetAt(0) } };
+            return hstring{ filePath.filename().wstring() };
+        }
+        else if (currentSound.Size() > 1)
+        {
+            return RS_(L"Profile_BellSoundPreviewMultiple");
+        }
+        // This shouldn't be possible
+        assert(false);
+        return {};
+    }
+
+    void ProfileViewModel::RequestAddBellSound()
+    {
+        _CurrentBellSounds.Append({});
+        _NotifyChanges(L"CurrentBellSounds");
+    }
+
+    void ProfileViewModel::RequestDeleteBellSound(uint32_t index)
+    {
+        if (!HasBellSound() || index >= _CurrentBellSounds.Size())
+        {
+            return;
+        }
+
+        _CurrentBellSounds.RemoveAt(index);
+        _NotifyChanges(L"CurrentBellSounds");
+    }
+
+    //Editor::BellSoundEntryViewModel ProfileViewModel::RequestAddBellSound()
+    //{
+    //    //if (!_CurrentBellSounds)
+    //    //{
+    //    //    _CurrentBellSounds = winrt::single_threaded_observable_vector<Editor::BellSoundEntryViewModel>();
+    //    //}
+    //    // debug code
+    //    //OutputDebugString(L"Size:");
+    //    //OutputDebugString(std::to_wstring(_CurrentBellSounds.Size()).data());
+    //    //OutputDebugString(L"\n");
+    //    //for (auto&& e : _CurrentBellSounds)
+    //    //{
+    //    //    OutputDebugString(std::wstring_view{ e.Path() }.data());
+    //    //    OutputDebugString(L"\n");
+    //    //}
+    //
+    //    //auto entry = make<BellSoundEntryViewModel>();
+    //    //_CurrentBellSounds.Append(entry);
+    //
+    //
+    //    //_NotifyChanges(L"CurrentBellSounds");
+    //    //return entry;
+    //}
+
+    //void ProfileViewModel::RequestDeleteBellSound(Editor::BellSoundEntryViewModel bellSound)
+    //{
+    //    for (uint32_t i = 0; i < _CurrentBellSounds.Size(); i++)
+    //    {
+    //        if (bellSound == _CurrentBellSounds.GetAt(i))
+    //        {
+    //            _CurrentBellSounds.RemoveAt(i);
+    //            _NotifyChanges(L"CurrentBellSounds");
+    //            break;
+    //        }
+    //    }
+    //}
 
     void ProfileViewModel::DeleteProfile()
     {

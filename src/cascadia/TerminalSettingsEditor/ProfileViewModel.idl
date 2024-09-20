@@ -25,6 +25,11 @@ namespace Microsoft.Terminal.Settings.Editor
         Guid ProfileGuid { get; };
     }
 
+    //runtimeclass BellSoundEntryViewModel
+    //{
+    //    String Path;
+    //}
+
     enum ProfileSubPage
     {
         Base = 0,
@@ -47,6 +52,13 @@ namespace Microsoft.Terminal.Settings.Editor
         void SetBellStyleAudible(Windows.Foundation.IReference<Boolean> on);
         void SetBellStyleWindow(Windows.Foundation.IReference<Boolean> on);
         void SetBellStyleTaskbar(Windows.Foundation.IReference<Boolean> on);
+
+        String BellSoundPreview { get; };
+        Windows.Foundation.Collections.IObservableVector<String> CurrentBellSounds { get; };
+        //BellSoundEntryViewModel RequestAddBellSound();
+        //void RequestDeleteBellSound(BellSoundEntryViewModel bellSound);
+        void RequestAddBellSound();
+        void RequestDeleteBellSound(UInt32 index);
 
         IInspectable CurrentAntiAliasingMode;
         Windows.Foundation.Collections.IObservableVector<Microsoft.Terminal.Settings.Editor.EnumEntry> AntiAliasingModeList { get; };
@@ -105,6 +117,7 @@ namespace Microsoft.Terminal.Settings.Editor
         OBSERVABLE_PROJECTED_PROFILE_SETTING(Boolean, SnapOnInput);
         OBSERVABLE_PROJECTED_PROFILE_SETTING(Boolean, AltGrAliasing);
         OBSERVABLE_PROJECTED_PROFILE_SETTING(Microsoft.Terminal.Settings.Model.BellStyle, BellStyle);
+        OBSERVABLE_PROJECTED_PROFILE_SETTING(Windows.Foundation.Collections.IVector<String>, BellSound);
         OBSERVABLE_PROJECTED_PROFILE_SETTING(Boolean, Elevate);
         OBSERVABLE_PROJECTED_PROFILE_SETTING(Boolean, ReloadEnvironmentVariables);
         OBSERVABLE_PROJECTED_PROFILE_SETTING(Boolean, RightClickContextMenu);

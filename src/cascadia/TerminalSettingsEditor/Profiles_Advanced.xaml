@@ -22,6 +22,38 @@
                           x:DataType="local:EnumEntry">
                 <TextBlock Text="{x:Bind EnumName, Mode=OneWay}" />
             </DataTemplate>
+
+            <!--<DataTemplate x:Key="BellSoundEntryViewModelTemplate"
+                          x:DataType="local:BellSoundEntryViewModel">
+                <Grid TabFocusNavigation="Local">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Uid="Profile_BellSoundPath"
+                             Grid.Column="0"
+                             IsSpellCheckEnabled="False"
+                             Text="{x:Bind Path, Mode=TwoWay}"
+                             Style="{StaticResource TextBoxSettingStyle}" />
+                    <Button x:Uid="Profile_BellSoundBrowse"
+                            Grid.Column="1"
+                            Tag="{x:Bind}"
+                            VerticalAlignment="Stretch"
+                            Click="BellSoundBrowse_Click"
+                            Style="{StaticResource BrowseButtonStyle}" />
+                    <Button x:Uid="Profile_BellSoundDelete"
+                            Grid.Column="2"
+                            Margin="5,0,0,0"
+                            Tag="{x:Bind}"
+                            Click="BellSoundDelete_Click"
+                            VerticalAlignment="Stretch"
+                            Style="{StaticResource DeleteButtonStyle}">
+                        <FontIcon FontSize="{StaticResource StandardIconSize}"
+                                  Glyph="&#xE74D;" />
+                    </Button>
+                </Grid>
+            </DataTemplate>-->
         </ResourceDictionary>
     </Page.Resources>
 
@@ -114,6 +146,65 @@
                               IsChecked="{x:Bind Profile.IsBellStyleFlagSet(2), BindBack=Profile.SetBellStyleWindow, Mode=TwoWay}" />
                     <CheckBox x:Uid="Profile_BellStyleTaskbar"
                               IsChecked="{x:Bind Profile.IsBellStyleFlagSet(4), BindBack=Profile.SetBellStyleTaskbar, Mode=TwoWay}" />
+                </StackPanel>
+            </local:SettingContainer>
+
+            <!--  Bell Sound  -->
+            <local:SettingContainer x:Uid="Profile_BellSound"
+                                    ClearSettingValue="{x:Bind Profile.ClearBellSound}"
+                                    HasSettingValue="{x:Bind Profile.HasBellSound, Mode=OneWay}"
+                                    SettingOverrideSource="{x:Bind Profile.BellSoundOverrideSource, Mode=OneWay}"
+                                    CurrentValue="{x:Bind Profile.BellSoundPreview, Mode=OneWay}"
+                                    Style="{StaticResource ExpanderSettingContainerStyle}">
+                <StackPanel Spacing="10">
+                    <!--<StackPanel x:Name="BellSoundStack"
+                                Spacing="5"
+                                TabFocusNavigation="Local"/>-->
+                    <ItemsControl ItemsSource="{x:Bind Profile.CurrentBellSounds, Mode=OneWay}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Spacing="5"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid TabFocusNavigation="Local">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Uid="Profile_BellSoundPath"
+                                            Grid.Column="0"
+                                            IsSpellCheckEnabled="False"
+                                            Text="{Binding Mode=TwoWay}"
+                                            Style="{StaticResource TextBoxSettingStyle}" />
+                                    <Button x:Uid="Profile_BellSoundBrowse"
+                                            Grid.Column="1"
+                                            VerticalAlignment="Stretch"
+                                            Click="BellSoundBrowse_Click"
+                                            Style="{StaticResource BrowseButtonStyle}" />
+                                    <Button x:Uid="Profile_BellSoundDelete"
+                                            Grid.Column="2"
+                                            Margin="5,0,0,0"
+                                            Click="BellSoundDelete_Click"
+                                            VerticalAlignment="Stretch"
+                                            Style="{StaticResource DeleteButtonStyle}">
+                                        <FontIcon FontSize="{StaticResource StandardIconSize}"
+                                                  Glyph="&#xE74D;" />
+                                    </Button>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button Click="AddBellSound_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <FontIcon FontSize="{StaticResource StandardIconSize}"
+                                      Glyph="&#xE948;" />
+                            <TextBlock x:Uid="Profile_AddBellSound"
+                                       Margin="10,0,0,0" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
             </local:SettingContainer>
 
